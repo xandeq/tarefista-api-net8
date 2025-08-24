@@ -1,0 +1,36 @@
+name: Build and Deploy API
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore pacotes
+        run: dotnet restore
+
+      - name: Build projeto
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publicar artefatos
+        run: dotnet publish -c Release -o ./publish
+
+      - name: Deploy via FTP para SmarterASP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_PATH }}
