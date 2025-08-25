@@ -8,6 +8,11 @@ jobs:
   build:
     runs-on: windows-latest
 
+    env:   # 👈 vale para todos os steps abaixo
+      AWS__AccessKeyId: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS__SecretAccessKey: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      JWT__Secret: ${{ secrets.JWT_SECRET }}
+
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
