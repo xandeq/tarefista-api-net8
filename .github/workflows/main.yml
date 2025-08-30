@@ -1,0 +1,106 @@
+name: Build and Deploy API
+
+on:
+  push:
+    branches: [ "main2" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:   # 👈 vale para todos os steps abaixo
+      AWS__AccessKeyId: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS__SecretAccessKey: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      JWT__Secret: ${{ secrets.JWT_SECRET }}
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore pacotes
+        run: dotnet restore
+
+      - name: Build projeto
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Limpar pasta publish
+        shell: pwsh
+        run: Remove-Item -Recurse -Force ./publish -ErrorAction SilentlyContinue
+
+      - name: Publicar artefatos (self-contained x86, single-file)
+        run: dotnet publish Tarefista.Api.csproj -c Release -o ./publish -r win-x86 --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
+
+      - name: Sanity check do publish
+        shell: pwsh
+        run: |
+          $exe = Get-Item ./publish/Tarefista.Api.exe -ErrorAction Stop
+          if ($exe.Length -lt 30000000) { throw "Tarefista.Api.exe muito pequeno ($($exe.Length) bytes)." }
+
+      - name: Criar pasta de logs
+        run: mkdir ./publish/logs
+
+      - name: Injetar variáveis no web.config
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "publish/web.config"
+          [xml]$xml = Get-Content $path
+          $envVars = $xml.configuration.location."system.webServer".aspNetCore.environmentVariables
+          if (-not $envVars) {
+            $envVars = $xml.CreateElement("environmentVariables")
+            $xml.configuration.location."system.webServer".aspNetCore.AppendChild($envVars) | Out-Null
+          }
+          function Set-Env([xml]$x,$p,$n,$v){$node=$p.SelectSingleNode("environmentVariable[@name='$n']"); if(-not $node){$node=$x.CreateElement("environmentVariable");$a=$x.CreateAttribute("name");$a.Value=$n;$node.Attributes.Append($a)|Out-Null;$b=$x.CreateAttribute("value");$b.Value=$v;$node.Attributes.Append($b)|Out-Null;$p.AppendChild($node)|Out-Null}else{$node.Attributes["value"].Value=$v}}
+          Set-Env $xml $envVars "AWS__AccessKeyId"     "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          Set-Env $xml $envVars "AWS__SecretAccessKey" "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          Set-Env $xml $envVars "JWT__Secret"          "${{ secrets.JWT_SECRET }}"
+          $xml.Save($path)
+
+      - name: Ajustar web.config para out-of-process e habilitar stdout
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "publish/web.config"
+          [xml]$xml = Get-Content $path
+          $an = $xml.configuration.location."system.webServer".aspNetCore
+          if (-not $an) { throw "Nó <aspNetCore> não encontrado no web.config" }
+      
+          $an.SetAttribute("hostingModel", "outofprocess")
+          $an.SetAttribute("processPath", ".\Tarefista.Api.exe")
+          if ($an.HasAttribute("arguments")) { $an.RemoveAttribute("arguments") }
+          $an.SetAttribute("stdoutLogEnabled", "true")
+          $an.SetAttribute("stdoutLogFile", ".\logs\stdout")
+      
+          # (opcional) erros detalhados temporários:
+          $envVars = $an.environmentVariables
+          if (-not $envVars) {
+            $envVars = $xml.CreateElement("environmentVariables")
+            $an.AppendChild($envVars) | Out-Null
+          }
+          function Set-Env([xml]$x,$p,$n,$v){
+            $node=$p.SelectSingleNode("environmentVariable[@name='$n']")
+            if(-not $node){
+              $node=$x.CreateElement("environmentVariable")
+              $a=$x.CreateAttribute("name");$a.Value=$n;$node.Attributes.Append($a)|Out-Null
+              $b=$x.CreateAttribute("value");$b.Value=$v;$node.Attributes.Append($b)|Out-Null
+              $p.AppendChild($node)|Out-Null
+            } else {
+              $node.Attributes["value"].Value=$v
+            }
+          }
+          Set-Env $xml $envVars "ASPNETCORE_ENVIRONMENT" "Production"
+          Set-Env $xml $envVars "ASPNETCORE_DETAILEDERRORS" "true"
+      
+          $xml.Save($path)
+
+      - name: Deploy via FTP para SmarterASP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./publish/
+          server-dir: ${{ secrets.FTP_PATH }}/

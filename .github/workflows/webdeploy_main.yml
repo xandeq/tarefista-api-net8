@@ -1,0 +1,105 @@
+name: Build & Deploy to SmarterASP (WebDeploy)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  RUNTIME: win-x64   # troque para win-x86 se site for 32-bit
+  DETAILED_ERRORS: "false"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - run: dotnet restore
+      - run: dotnet build --configuration Release --no-restore
+
+      - name: Publish self-contained (single-file)
+        run: dotnet publish Tarefista.Api.csproj -c Release -o ./drop -r ${{ env.RUNTIME }} --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
+
+      - name: Forçar web.config correto (overwrite) + limpar transforms
+        shell: pwsh
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          JWT_SECRET:            ${{ secrets.JWT_SECRET }}
+          DETAILED_ERRORS:       ${{ env.DETAILED_ERRORS || 'true' }}
+        run: |
+          New-Item -ItemType Directory -Force -Path ./artifact/logs | Out-Null
+          $path = Join-Path $PWD "artifact/web.config"
+      
+          $envBlock = @()
+          if ($env:AWS_ACCESS_KEY_ID)     { $envBlock += "          <environmentVariable name=""AWS__AccessKeyId"" value=""$($env:AWS_ACCESS_KEY_ID)"" />" }
+          if ($env:AWS_SECRET_ACCESS_KEY) { $envBlock += "          <environmentVariable name=""AWS__SecretAccessKey"" value=""$($env:AWS_SECRET_ACCESS_KEY)"" />" }
+          if ($env:JWT_SECRET)            { $envBlock += "          <environmentVariable name=""JWT__Secret"" value=""$($env:JWT_SECRET)"" />" }
+      
+          $lines = @(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<configuration>'
+            '  <location path="." inheritInChildApplications="false">'
+            '    <system.webServer>'
+            '      <handlers>'
+            '        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />'
+            '      </handlers>'
+            '      <aspNetCore processPath=".\Tarefista.Api.exe" hostingModel="outofprocess" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout">'
+            '        <environmentVariables>'
+            '          <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />'
+            "          <environmentVariable name=""ASPNETCORE_DETAILEDERRORS"" value=""$env:DETAILED_ERRORS"" />"
+            ($envBlock -join "`n")
+            '        </environmentVariables>'
+            '      </aspNetCore>'
+            '    </system.webServer>'
+            '  </location>'
+            '</configuration>'
+          ) | Where-Object { $_ -ne $null }
+          Set-Content -Path $path -Encoding utf8 -Value $lines
+      
+          Get-ChildItem -Path artifact -Filter "web.*.config" -File | Where-Object { $_.Name -ne "web.config" } | Remove-Item -Force
+      
+      - name: Conferir aspNetCore no web.config (sanitizado)
+        shell: pwsh
+        run: |
+          (Select-Xml -Path artifact/web.config -XPath "//aspNetCore").Node.OuterXml -replace 'value="[^"]+"','value="***"' | Write-Host
+
+      - name: Upload artifact (drop)
+        uses: actions/upload-artifact@v4
+        with:
+          name: drop
+          path: drop/**
+
+  deploy:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Download artifact (drop)
+        uses: actions/download-artifact@v4
+        with:
+          name: drop
+          path: drop
+
+      - name: Web Deploy (msdeploy)
+        shell: pwsh
+        env:
+          # Pegue esses dados no painel da SmarterASP (Web Deploy Info)
+          SourcePath: "drop" # pasta com os arquivos publicados
+          ServiceUrl:  ${{ secrets.MSDEPLOY_URL }}   # ex: https://win1151.site4now.net:8172/msdeploy.axd
+          SiteName:    ${{ secrets.MSDEPLOY_SITE }}  # ex: partiurock-003/tarefista-api
+          UserName:    ${{ secrets.MSDEPLOY_USER }}
+          Password:    ${{ secrets.MSDEPLOY_PASSWORD }}
+        run: |
+          $src = Join-Path $PWD $env:SourcePath
+          $msdeploy = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+          if (-not (Test-Path $msdeploy)) { throw "msdeploy.exe não encontrado no runner." }
+          
+          & $msdeploy -verb:sync `
+            -source:contentPath="$src" `
+            -dest:contentPath="$env:SiteName",computerName="$env:ServiceUrl",userName="$env:UserName",password="$env:Password",authtype=Basic,includeAcls=False `
+            -allowUntrusted `
+            -disableLink:AppPoolExtension -disableLink:ContentExtension -disableLink:CertificateExtension `
+            -enableRule:AppOffline
+
