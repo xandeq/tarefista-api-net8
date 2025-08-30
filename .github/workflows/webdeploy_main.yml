@@ -1,0 +1,125 @@
+name: Build & Deploy to SmarterASP (WebDeploy)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  RUNTIME: win-x64   # troque para win-x86 se site for 32-bit
+  DETAILED_ERRORS: "false"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - run: dotnet restore
+      - run: dotnet build --configuration Release --no-restore
+
+      - name: Publish self-contained (single-file)
+        run: dotnet publish Tarefista.Api.csproj -c Release -o ./drop -r ${{ env.RUNTIME }} --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
+
+      - name: Criar logs e ajustar web.config
+        shell: pwsh
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          JWT_SECRET:            ${{ secrets.JWT_SECRET }}
+          DETAILED_ERRORS:       ${{ env.DETAILED_ERRORS }}
+        run: |
+          mkdir ./drop/logs | Out-Null
+          $path = Join-Path $PWD "drop/web.config"
+          if (-not (Test-Path $path)) {
+@"
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <location path="." inheritInChildApplications="false">
+    <system.webServer>
+      <handlers>
+        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />
+      </handlers>
+      <aspNetCore processPath=".\Tarefista.Api.exe" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout" hostingModel="outofprocess">
+        <environmentVariables>
+          <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />
+          <environmentVariable name="ASPNETCORE_DETAILEDERRORS" value="false" />
+        </environmentVariables>
+      </aspNetCore>
+    </system.webServer>
+  </location>
+</configuration>
+"@ | Out-File -Encoding utf8 $path
+          }
+
+          [xml]$xml = Get-Content $path
+          $an = $xml.configuration.location."system.webServer".aspNetCore
+          $an.SetAttribute("hostingModel", "outofprocess")
+          $an.SetAttribute("processPath", ".\Tarefista.Api.exe")
+          if ($an.HasAttribute("arguments")) { $an.RemoveAttribute("arguments") }
+          $an.SetAttribute("stdoutLogEnabled", "true")
+          $an.SetAttribute("stdoutLogFile", ".\logs\stdout")
+
+          $envVars = $an.environmentVariables
+          if (-not $envVars) {
+            $envVars = $xml.CreateElement("environmentVariables")
+            $an.AppendChild($envVars) | Out-Null
+          }
+          function Set-Env([xml]$doc,$parent,$name,$value){
+            $node=$parent.SelectSingleNode("environmentVariable[@name='$name']")
+            if(-not $node){
+              $node=$doc.CreateElement("environmentVariable")
+              $a=$doc.CreateAttribute("name");  $a.Value=$name;  $node.Attributes.Append($a)|Out-Null
+              $b=$doc.CreateAttribute("value"); $b.Value=$value; $node.Attributes.Append($b)|Out-Null
+              $parent.AppendChild($node)|Out-Null
+            } else {
+              $node.Attributes["value"].Value = $value
+            }
+          }
+          Set-Env $xml $envVars "ASPNETCORE_ENVIRONMENT" "Production"
+          Set-Env $xml $envVars "ASPNETCORE_DETAILEDERRORS" "$env:DETAILED_ERRORS"
+
+          if ($env:AWS_ACCESS_KEY_ID)     { Set-Env $xml $envVars "AWS__AccessKeyId"     "$env:AWS_ACCESS_KEY_ID" }
+          if ($env:AWS_SECRET_ACCESS_KEY) { Set-Env $xml $envVars "AWS__SecretAccessKey" "$env:AWS_SECRET_ACCESS_KEY" }
+          if ($env:JWT_SECRET)            { Set-Env $xml $envVars "JWT__Secret"          "$env:JWT_SECRET" }
+
+          $xml.Save($path)
+
+      - name: Upload artifact (drop)
+        uses: actions/upload-artifact@v4
+        with:
+          name: drop
+          path: drop/**
+
+  deploy:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Download artifact (drop)
+        uses: actions/download-artifact@v4
+        with:
+          name: drop
+          path: drop
+
+      - name: Web Deploy (msdeploy)
+        shell: pwsh
+        env:
+          # Pegue esses dados no painel da SmarterASP (Web Deploy Info)
+          SourcePath: "drop" # pasta com os arquivos publicados
+          ServiceUrl:  ${{ secrets.MSDEPLOY_URL }}   # ex: https://win1151.site4now.net:8172/msdeploy.axd
+          SiteName:    ${{ secrets.MSDEPLOY_SITE }}  # ex: partiurock-003/tarefista-api
+          UserName:    ${{ secrets.MSDEPLOY_USER }}
+          Password:    ${{ secrets.MSDEPLOY_PASSWORD }}
+        run: |
+          $src = Join-Path $PWD $env:SourcePath
+          $msdeploy = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+          if (-not (Test-Path $msdeploy)) { throw "msdeploy.exe não encontrado no runner." }
+
+          # Com AppOffline + NÃO deletar arquivos extras
+          & "$msdeploy" -verb:sync `
+            -source:contentPath="$src" `
+            -dest:contentPath="$env:SiteName",computerName="$env:ServiceUrl",userName="$env:UserName",password="$env:Password",authtype="Basic",includeAcls="False" `
+            -allowUntrusted `
+            -disableLink:AppPoolExtension -disableLink:ContentExtension -disableLink:CertificateExtension `
+            -enableRule:AppOffline -enableRule:DoNotDeleteRule
