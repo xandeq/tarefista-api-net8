@@ -33,24 +33,24 @@ jobs:
           mkdir ./drop/logs | Out-Null
           $path = Join-Path $PWD "drop/web.config"
           if (-not (Test-Path $path)) {
-@"
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <location path="." inheritInChildApplications="false">
-    <system.webServer>
-      <handlers>
-        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />
-      </handlers>
-      <aspNetCore processPath=".\Tarefista.Api.exe" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout" hostingModel="outofprocess">
-        <environmentVariables>
-          <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />
-          <environmentVariable name="ASPNETCORE_DETAILEDERRORS" value="false" />
-        </environmentVariables>
-      </aspNetCore>
-    </system.webServer>
-  </location>
-</configuration>
-"@ | Out-File -Encoding utf8 $path
+            @"
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration>
+              <location path="." inheritInChildApplications="false">
+                <system.webServer>
+                  <handlers>
+                    <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />
+                  </handlers>
+                  <aspNetCore processPath=".\Tarefista.Api.exe" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout" hostingModel="outofprocess">
+                    <environmentVariables>
+                      <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />
+                      <environmentVariable name="ASPNETCORE_DETAILEDERRORS" value="false" />
+                    </environmentVariables>
+                  </aspNetCore>
+                </system.webServer>
+              </location>
+            </configuration>
+            "@ | Out-File -Encoding utf8 $path
           }
 
           [xml]$xml = Get-Content $path
