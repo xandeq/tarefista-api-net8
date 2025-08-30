@@ -85,21 +85,36 @@ jobs:
       - name: Web Deploy (msdeploy)
         shell: pwsh
         env:
-          # Pegue esses dados no painel da SmarterASP (Web Deploy Info)
-          SourcePath: "drop" # pasta com os arquivos publicados
-          ServiceUrl:  ${{ secrets.MSDEPLOY_URL }}   # ex: https://win1151.site4now.net:8172/msdeploy.axd
-          SiteName:    ${{ secrets.MSDEPLOY_SITE }}  # ex: partiurock-003/tarefista-api
+          SourcePath: "drop"
+          ServiceUrl:  ${{ secrets.MSDEPLOY_URL }}      # ex: https://win1151.site4now.net:8172/msdeploy.axd
+          SiteName:    ${{ secrets.MSDEPLOY_SITE }}     # ex: partiurock-003/tarefista-api
           UserName:    ${{ secrets.MSDEPLOY_USER }}
           Password:    ${{ secrets.MSDEPLOY_PASSWORD }}
         run: |
           $src = Join-Path $PWD $env:SourcePath
           $msdeploy = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
           if (-not (Test-Path $msdeploy)) { throw "msdeploy.exe não encontrado no runner." }
-          
-          & $msdeploy -verb:sync `
-            -source:contentPath="$src" `
-            -dest:contentPath="$env:SiteName",computerName="$env:ServiceUrl",userName="$env:UserName",password="$env:Password",authtype=Basic,includeAcls=False `
-            -allowUntrusted `
-            -disableLink:AppPoolExtension -disableLink:ContentExtension -disableLink:CertificateExtension `
-            -enableRule:AppOffline
+
+          # Monte o -dest inteiro como UMA string, com as propriedades entre aspas
+          $dest = "-dest:contentPath=`"$($env:SiteName)`",computerName=`"$($env:ServiceUrl)`",userName=`"$($env:UserName)`",password=`"$($env:Password)`",authType=`"Basic`",includeAcls=`"False`""
+
+          # Use splatting (array de argumentos) para evitar problemas de escape
+          $args = @(
+            "-verb:sync",
+            "-source:contentPath=$src",
+            $dest,
+            "-allowUntrusted",
+            "-disableLink:AppPoolExtension",
+            "-disableLink:ContentExtension",
+            "-disableLink:CertificateExtension",
+            "-enableRule:AppOffline"
+          )
+
+          # (opcional) log seguro pra depurar montagem dos args, sem expor a senha
+          $safeDest = $dest -replace ('password=`"[^`"]*`"'), 'password="***"'
+          Write-Host "msdeploy args (safe): $($args -join ' ' -replace ('password=`"[^`"]*`"'), 'password="***"')"
+
+          & $msdeploy @args
+          if ($LASTEXITCODE -ne 0) { throw "msdeploy falhou com código $LASTEXITCODE" }
+
 
