@@ -50,6 +50,42 @@ jobs:
           Set-Env $xml $envVars "JWT__Secret"          "${{ secrets.JWT_SECRET }}"
           $xml.Save($path)
 
+      - name: Ajustar web.config para out-of-process e habilitar stdout
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "publish/web.config"
+          [xml]$xml = Get-Content $path
+          $an = $xml.configuration.location."system.webServer".aspNetCore
+          if (-not $an) { throw "Nó <aspNetCore> não encontrado no web.config" }
+      
+          $an.SetAttribute("hostingModel", "outofprocess")
+          $an.SetAttribute("processPath", "dotnet")
+          $an.SetAttribute("arguments", ".\Tarefista.Api.dll")
+          $an.SetAttribute("stdoutLogEnabled", "true")
+          $an.SetAttribute("stdoutLogFile", ".\logs\stdout")
+      
+          # (opcional) erros detalhados temporários:
+          $envVars = $an.environmentVariables
+          if (-not $envVars) {
+            $envVars = $xml.CreateElement("environmentVariables")
+            $an.AppendChild($envVars) | Out-Null
+          }
+          function Set-Env([xml]$x,$p,$n,$v){
+            $node=$p.SelectSingleNode("environmentVariable[@name='$n']")
+            if(-not $node){
+              $node=$x.CreateElement("environmentVariable")
+              $a=$x.CreateAttribute("name");$a.Value=$n;$node.Attributes.Append($a)|Out-Null
+              $b=$x.CreateAttribute("value");$b.Value=$v;$node.Attributes.Append($b)|Out-Null
+              $p.AppendChild($node)|Out-Null
+            } else {
+              $node.Attributes["value"].Value=$v
+            }
+          }
+          Set-Env $xml $envVars "ASPNETCORE_ENVIRONMENT" "Production"
+          Set-Env $xml $envVars "ASPNETCORE_DETAILEDERRORS" "true"
+      
+          $xml.Save($path)
+
       - name: Deploy via FTP para SmarterASP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
