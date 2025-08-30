@@ -29,7 +29,26 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Publicar artefatos
-        run: dotnet publish -c Release -o ./publish
+        run: dotnet publish ./Tarefista.Api/Tarefista.Api.csproj -c Release -o ./publish
+
+      - name: Criar pasta de logs
+        run: mkdir ./publish/logs
+
+      - name: Injetar variáveis no web.config
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "publish/web.config"
+          [xml]$xml = Get-Content $path
+          $envVars = $xml.configuration.location."system.webServer".aspNetCore.environmentVariables
+          if (-not $envVars) {
+            $envVars = $xml.CreateElement("environmentVariables")
+            $xml.configuration.location."system.webServer".aspNetCore.AppendChild($envVars) | Out-Null
+          }
+          function Set-Env([xml]$x,$p,$n,$v){$node=$p.SelectSingleNode("environmentVariable[@name='$n']"); if(-not $node){$node=$x.CreateElement("environmentVariable");$a=$x.CreateAttribute("name");$a.Value=$n;$node.Attributes.Append($a)|Out-Null;$b=$x.CreateAttribute("value");$b.Value=$v;$node.Attributes.Append($b)|Out-Null;$p.AppendChild($node)|Out-Null}else{$node.Attributes["value"].Value=$v}}
+          Set-Env $xml $envVars "AWS__AccessKeyId"     "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          Set-Env $xml $envVars "AWS__SecretAccessKey" "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          Set-Env $xml $envVars "JWT__Secret"          "${{ secrets.JWT_SECRET }}"
+          $xml.Save($path)
 
       - name: Deploy via FTP para SmarterASP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
