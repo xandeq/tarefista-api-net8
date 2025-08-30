@@ -28,8 +28,18 @@ jobs:
       - name: Build projeto
         run: dotnet build --configuration Release --no-restore
 
-      - name: Publicar artefatos
-        run: dotnet publish Tarefista.Api.csproj -c Release -o ./publish
+      - name: Limpar pasta publish
+        shell: pwsh
+        run: Remove-Item -Recurse -Force ./publish -ErrorAction SilentlyContinue
+
+      - name: Publicar artefatos (self-contained x64, single-file)
+        run: dotnet publish Tarefista.Api.csproj -c Release -o ./publish -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
+
+      - name: Sanity check do publish
+        shell: pwsh
+        run: |
+          $exe = Get-Item ./publish/Tarefista.Api.exe -ErrorAction Stop
+          if ($exe.Length -lt 50000000) { throw "Tarefista.Api.exe muito pequeno ($($exe.Length) bytes). Esperado self-contained single-file." }
 
       - name: Criar pasta de logs
         run: mkdir ./publish/logs
@@ -59,8 +69,8 @@ jobs:
           if (-not $an) { throw "Nó <aspNetCore> não encontrado no web.config" }
       
           $an.SetAttribute("hostingModel", "outofprocess")
-          $an.SetAttribute("processPath", "dotnet")
-          $an.SetAttribute("arguments", ".\Tarefista.Api.dll")
+          $an.SetAttribute("processPath", ".\Tarefista.Api.exe")
+          if ($an.HasAttribute("arguments")) { $an.RemoveAttribute("arguments") }
           $an.SetAttribute("stdoutLogEnabled", "true")
           $an.SetAttribute("stdoutLogFile", ".\logs\stdout")
       
