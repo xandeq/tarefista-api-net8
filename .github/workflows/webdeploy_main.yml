@@ -22,82 +22,49 @@ jobs:
       - name: Publish self-contained (single-file)
         run: dotnet publish Tarefista.Api.csproj -c Release -o ./drop -r ${{ env.RUNTIME }} --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
 
-      - name: Criar logs e ajustar web.config (sem here-string)
+      - name: Forçar web.config correto (overwrite) + limpar transforms
         shell: pwsh
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           JWT_SECRET:            ${{ secrets.JWT_SECRET }}
-          DETAILED_ERRORS:       ${{ env.DETAILED_ERRORS || 'false' }}
+          DETAILED_ERRORS:       ${{ env.DETAILED_ERRORS || 'true' }}
         run: |
-          # Garante pasta de logs no drop
-          New-Item -ItemType Directory -Force -Path ./drop/logs | Out-Null
+          New-Item -ItemType Directory -Force -Path ./artifact/logs | Out-Null
+          $path = Join-Path $PWD "artifact/web.config"
       
-          $path = Join-Path $PWD "drop/web.config"
+          $envBlock = @()
+          if ($env:AWS_ACCESS_KEY_ID)     { $envBlock += "          <environmentVariable name=""AWS__AccessKeyId"" value=""$($env:AWS_ACCESS_KEY_ID)"" />" }
+          if ($env:AWS_SECRET_ACCESS_KEY) { $envBlock += "          <environmentVariable name=""AWS__SecretAccessKey"" value=""$($env:AWS_SECRET_ACCESS_KEY)"" />" }
+          if ($env:JWT_SECRET)            { $envBlock += "          <environmentVariable name=""JWT__Secret"" value=""$($env:JWT_SECRET)"" />" }
       
-          # Cria web.config apenas se não existir (sem here-string)
-          if (-not (Test-Path $path)) {
-            $lines = @(
-              '<?xml version="1.0" encoding="utf-8"?>'
-              '<configuration>'
-              '  <location path="." inheritInChildApplications="false">'
-              '    <system.webServer>'
-              '      <handlers>'
-              '        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />'
-              '      </handlers>'
-              '      <aspNetCore processPath=".\Tarefista.Api.exe" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout" hostingModel="outofprocess">'
-              '        <environmentVariables>'
-              '          <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />'
-              '          <environmentVariable name="ASPNETCORE_DETAILEDERRORS" value="false" />'
-              '        </environmentVariables>'
-              '      </aspNetCore>'
-              '    </system.webServer>'
-              '  </location>'
-              '</configuration>'
-            )
-            Set-Content -Path $path -Encoding utf8 -Value $lines
-          }
+          $lines = @(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<configuration>'
+            '  <location path="." inheritInChildApplications="false">'
+            '    <system.webServer>'
+            '      <handlers>'
+            '        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />'
+            '      </handlers>'
+            '      <aspNetCore processPath=".\Tarefista.Api.exe" hostingModel="outofprocess" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout">'
+            '        <environmentVariables>'
+            '          <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />'
+            "          <environmentVariable name=""ASPNETCORE_DETAILEDERRORS"" value=""$env:DETAILED_ERRORS"" />"
+            ($envBlock -join "`n")
+            '        </environmentVariables>'
+            '      </aspNetCore>'
+            '    </system.webServer>'
+            '  </location>'
+            '</configuration>'
+          ) | Where-Object { $_ -ne $null }
+          Set-Content -Path $path -Encoding utf8 -Value $lines
       
-          # Abre e ajusta atributos/variáveis
-          [xml]$xml = Get-Content $path
-          $an = $xml.configuration.location."system.webServer".aspNetCore
-          if (-not $an) { throw "Nó <aspNetCore> não encontrado no web.config" }
+          Get-ChildItem -Path artifact -Filter "web.*.config" -File | Where-Object { $_.Name -ne "web.config" } | Remove-Item -Force
       
-          # Garante execução do .EXE self-contained + logs
-          $an.SetAttribute("hostingModel", "outofprocess")
-          $an.SetAttribute("processPath", ".\Tarefista.Api.exe")
-          if ($an.HasAttribute("arguments")) { $an.RemoveAttribute("arguments") }
-          $an.SetAttribute("stdoutLogEnabled", "true")
-          $an.SetAttribute("stdoutLogFile", ".\logs\stdout")
-      
-          # Env vars
-          $envVars = $an.environmentVariables
-          if (-not $envVars) {
-            $envVars = $xml.CreateElement("environmentVariables")
-            $an.AppendChild($envVars) | Out-Null
-          }
-      
-          function Set-Env([xml]$doc,$parent,$name,$value){
-            $node=$parent.SelectSingleNode("environmentVariable[@name='$name']")
-            if(-not $node){
-              $node=$doc.CreateElement("environmentVariable")
-              $a=$doc.CreateAttribute("name");  $a.Value=$name;  $node.Attributes.Append($a) | Out-Null
-              $b=$doc.CreateAttribute("value"); $b.Value=$value; $node.Attributes.Append($b) | Out-Null
-              $parent.AppendChild($node) | Out-Null
-            } else {
-              $node.Attributes["value"].Value = $value
-            }
-          }
-      
-          Set-Env $xml $envVars "ASPNETCORE_ENVIRONMENT" "Production"
-          Set-Env $xml $envVars "ASPNETCORE_DETAILEDERRORS" "$env:DETAILED_ERRORS"
-      
-          if ($env:AWS_ACCESS_KEY_ID)     { Set-Env $xml $envVars "AWS__AccessKeyId"     "$env:AWS_ACCESS_KEY_ID" }
-          if ($env:AWS_SECRET_ACCESS_KEY) { Set-Env $xml $envVars "AWS__SecretAccessKey" "$env:AWS_SECRET_ACCESS_KEY" }
-          if ($env:JWT_SECRET)            { Set-Env $xml $envVars "JWT__Secret"          "$env:JWT_SECRET" }
-      
-          $xml.Save($path)
-
+      - name: Conferir aspNetCore no web.config (sanitizado)
+        shell: pwsh
+        run: |
+          (Select-Xml -Path artifact/web.config -XPath "//aspNetCore").Node.OuterXml -replace 'value="[^"]+"','value="***"' | Write-Host
 
       - name: Upload artifact (drop)
         uses: actions/upload-artifact@v4
