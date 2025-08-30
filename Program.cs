@@ -5,6 +5,10 @@ using Microsoft.OpenApi.Models;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// após var builder = WebApplication.CreateBuilder(args);
+Directory.CreateDirectory("logs");
+
 var configuration = builder.Configuration;
 
 // -----------------------------
@@ -24,7 +28,7 @@ builder.Host.UseSerilog((context, services, loggerConfig) =>
 // -----------------------------
 builder.Services.AddControllers(options =>
 {
-    options.Filters.Add<GlobalExceptionFilter>(); // filtro global
+    //options.Filters.Add<GlobalExceptionFilter>(); // filtro global
 });
 
 builder.Services.AddEndpointsApiExplorer();
@@ -55,28 +59,56 @@ builder.Configuration.AddUserSecrets<Program>();
 // -----------------------------
 var app = builder.Build();
 
-// Swagger (sempre habilitado)
+// permite reler o body depois que o MVC já o consumiu
+app.Use(async (ctx, next) =>
+{
+    ctx.Request.EnableBuffering(bufferThreshold: 1024 * 60, bufferLimit: 1024 * 1024); // 60KB / 1MB
+    await next();
+});
+
+app.UseSerilogRequestLogging();          // já existe
+
+// ADICIONE / MANTENHA o ExceptionMiddleware AQUI, antes de Swagger/CORS/HTTPS
+app.UseMiddleware<ExceptionMiddleware>();
+
+// Swagger etc (já existentes)
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "Tarefista API V1");
-    c.RoutePrefix = string.Empty; // Swagger na raiz "/"
+    c.RoutePrefix = string.Empty;
 });
-
-// Middleware global de exceções (Serilog loga tudo)
-app.UseMiddleware<ExceptionMiddleware>();
 
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");
 app.MapControllers();
+
 
 // -----------------------------
 // Firebase Initialization
 // -----------------------------
 using (var scope = app.Services.CreateScope())
 {
-    var firebaseService = scope.ServiceProvider.GetRequiredService<FirebaseService>();
-    await firebaseService.InitializeAsync();
+    try
+    {
+        var firebaseService = scope.ServiceProvider.GetRequiredService<FirebaseService>();
+        await firebaseService.InitializeAsync();
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Falha ao inicializar Firebase (app continua rodando).");
+    }
 }
+
+app.MapGet("/healthz", () => Results.Ok(new { ok = true, ts = DateTimeOffset.UtcNow }));
+app.MapGet("/healthz/env", (IConfiguration cfg) =>
+    Results.Ok(new
+    {
+        AWS_AccessKeyId = !string.IsNullOrEmpty(cfg["AWS:AccessKeyId"]),
+        AWS_Secret = !string.IsNullOrEmpty(cfg["AWS:SecretAccessKey"]),
+        JWT_Secret = !string.IsNullOrEmpty(cfg["JWT:Secret"])
+    })
+);
+
 
 app.Run();

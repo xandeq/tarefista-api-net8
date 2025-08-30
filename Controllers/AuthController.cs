@@ -58,8 +58,9 @@ public class AuthController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao registrar usuário");
-            return StatusCode(500, new { message = "Error registering user", error = ex.Message });
+            throw;
         }
+
     }
 
     [HttpPost("login")]
