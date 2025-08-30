@@ -32,14 +32,14 @@ jobs:
         shell: pwsh
         run: Remove-Item -Recurse -Force ./publish -ErrorAction SilentlyContinue
 
-      - name: Publicar artefatos (self-contained x64, single-file)
-        run: dotnet publish Tarefista.Api.csproj -c Release -o ./publish -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
+      - name: Publicar artefatos (self-contained x86, single-file)
+        run: dotnet publish Tarefista.Api.csproj -c Release -o ./publish -r win-x86 --self-contained true /p:PublishSingleFile=true /p:IncludeAllContentForSelfExtract=true
 
       - name: Sanity check do publish
         shell: pwsh
         run: |
           $exe = Get-Item ./publish/Tarefista.Api.exe -ErrorAction Stop
-          if ($exe.Length -lt 50000000) { throw "Tarefista.Api.exe muito pequeno ($($exe.Length) bytes). Esperado self-contained single-file." }
+          if ($exe.Length -lt 30000000) { throw "Tarefista.Api.exe muito pequeno ($($exe.Length) bytes)." }
 
       - name: Criar pasta de logs
         run: mkdir ./publish/logs
