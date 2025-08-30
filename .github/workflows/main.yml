@@ -29,7 +29,7 @@ jobs:
         run: dotnet build --configuration Release --no-restore
 
       - name: Publicar artefatos
-        run: dotnet publish ./Tarefista.Api/Tarefista.Api.csproj -c Release -o ./publish
+        run: dotnet publish Tarefista.Api.csproj -c Release -o ./publish
 
       - name: Criar pasta de logs
         run: mkdir ./publish/logs
