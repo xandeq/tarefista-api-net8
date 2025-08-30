@@ -95,11 +95,11 @@ jobs:
           $src = Join-Path $PWD $env:SourcePath
           $msdeploy = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
           if (-not (Test-Path $msdeploy)) { throw "msdeploy.exe não encontrado no runner." }
-
-          # Com AppOffline + NÃO deletar arquivos extras
-          & "$msdeploy" -verb:sync `
+          
+          & $msdeploy -verb:sync `
             -source:contentPath="$src" `
-            -dest:contentPath="$env:SiteName",computerName="$env:ServiceUrl",userName="$env:UserName",password="$env:Password",authtype="Basic",includeAcls="False" `
+            -dest:contentPath="$env:SiteName",computerName="$env:ServiceUrl",userName="$env:UserName",password="$env:Password",authtype=Basic,includeAcls=False `
             -allowUntrusted `
             -disableLink:AppPoolExtension -disableLink:ContentExtension -disableLink:CertificateExtension `
-            -enableRule:AppOffline -enableRule:DoNotDeleteRule
+            -enableRule:AppOffline
+
