@@ -107,8 +107,8 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erro ao logar");
-            return StatusCode(500, new { message = "Error logging in", error = ex.Message });
+            _logger.LogError(ex, "Erro ao logar usuário");
+            throw;
         }
     }
 
