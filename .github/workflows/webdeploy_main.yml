@@ -30,14 +30,15 @@ jobs:
           JWT_SECRET:            ${{ secrets.JWT_SECRET }}
           DETAILED_ERRORS:       ${{ env.DETAILED_ERRORS || 'true' }}
         run: |
-          New-Item -ItemType Directory -Force -Path ./artifact/logs | Out-Null
-          $path = Join-Path $PWD "artifact/web.config"
-      
+          $drop = Join-Path $PWD "drop"
+          New-Item -ItemType Directory -Force -Path (Join-Path $drop "logs") | Out-Null
+          $path = Join-Path $drop "web.config"
+        
           $envBlock = @()
           if ($env:AWS_ACCESS_KEY_ID)     { $envBlock += "          <environmentVariable name=""AWS__AccessKeyId"" value=""$($env:AWS_ACCESS_KEY_ID)"" />" }
           if ($env:AWS_SECRET_ACCESS_KEY) { $envBlock += "          <environmentVariable name=""AWS__SecretAccessKey"" value=""$($env:AWS_SECRET_ACCESS_KEY)"" />" }
           if ($env:JWT_SECRET)            { $envBlock += "          <environmentVariable name=""JWT__Secret"" value=""$($env:JWT_SECRET)"" />" }
-      
+        
           $lines = @(
             '<?xml version="1.0" encoding="utf-8"?>'
             '<configuration>'
@@ -58,13 +59,15 @@ jobs:
             '</configuration>'
           ) | Where-Object { $_ -ne $null }
           Set-Content -Path $path -Encoding utf8 -Value $lines
-      
-          Get-ChildItem -Path artifact -Filter "web.*.config" -File | Where-Object { $_.Name -ne "web.config" } | Remove-Item -Force
+        
+          # Remove QUALQUER transform que tenha sobrado no drop (evita confusão no destino)
+          Get-ChildItem -Path $drop -Filter "web.*.config" -File | Where-Object { $_.Name -ne "web.config" } | Remove-Item -Force
       
       - name: Conferir aspNetCore no web.config (sanitizado)
         shell: pwsh
         run: |
-          (Select-Xml -Path artifact/web.config -XPath "//aspNetCore").Node.OuterXml -replace 'value="[^"]+"','value="***"' | Write-Host
+          run: |
+          (Select-Xml -Path drop/web.config -XPath "//aspNetCore").Node.OuterXml -replace 'value="[^"]+"','value="***"' | Write-Host
 
       - name: Upload artifact (drop)
         uses: actions/upload-artifact@v4
