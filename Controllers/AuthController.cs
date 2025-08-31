@@ -148,7 +148,16 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Error getting userId", error = ex.Message });
+            return StatusCode(500, new
+            {
+                message = "Error getting userId",
+                error = new
+                {
+                    ex.Message,
+                    ex.StackTrace,
+                    ex.Source
+                }
+            });
         }
     }
 }
