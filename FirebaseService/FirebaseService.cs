@@ -20,14 +20,22 @@ public class FirebaseService
         var accessKey = _config["AWS:AccessKeyId"];
         var secretKey = _config["AWS:SecretAccessKey"];
 
-        if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
-            throw new Exception("AWS credentials not found in configuration.");
+        if (!string.IsNullOrEmpty(accessKey) && !string.IsNullOrEmpty(secretKey))
+        {
+            _secretsManager = new AmazonSecretsManagerClient(accessKey, secretKey, RegionEndpoint.USEast1);
+        }
+        // Não lance exceção aqui; deixe o InitializeAsync validar.
+        // Assim a aplicação sobe e endpoints que não dependem do Firebase continuam funcionando.
+
 
         _secretsManager = new AmazonSecretsManagerClient(accessKey, secretKey, RegionEndpoint.USEast1);
     }
 
     public async Task InitializeAsync()
     {
+        if (_secretsManager == null)
+            throw new InvalidOperationException("AWS credentials not found in configuration.");
+
         var serviceAccount = await GetFirebaseCredentialsAsync();
 
         if (FirebaseApp.DefaultInstance == null)

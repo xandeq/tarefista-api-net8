@@ -82,7 +82,7 @@ public class AuthController : ControllerBase
                 return Unauthorized(new { message = "Invalid credentials" });
 
             // 🔹 Gerar JWT
-            var key = Encoding.UTF8.GetBytes(_config["JWT_SECRET"]);
+            var key = Encoding.UTF8.GetBytes(_config["JWT:Secret"]);
             var tokenHandler = new JwtSecurityTokenHandler();
             var tokenDescriptor = new SecurityTokenDescriptor
             {
