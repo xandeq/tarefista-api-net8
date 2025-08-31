@@ -117,6 +117,7 @@ jobs:
             "-disableLink:AppPoolExtension",
             "-disableLink:ContentExtension",
             "-disableLink:CertificateExtension",
+            "-enableRule:DoNotDeleteRule",
             "-enableRule:AppOffline"
           )
 
