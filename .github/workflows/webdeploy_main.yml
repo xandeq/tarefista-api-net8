@@ -95,27 +95,20 @@ jobs:
           $msdeploy = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
           if (-not (Test-Path $msdeploy)) { throw "msdeploy.exe não encontrado no runner." }
 
-          # 1) Sanitizar segredos p/ msdeploy
-          function Escape-ForMsDeploy([string]$s) {
-            if ($null -eq $s) { return "" }
-            # msdeploy aceita aspas internas como "" (duas aspas)
-            return ($s -replace '"','""')
+          # 1) Validar caracteres da senha que quebram o -dest
+          $pwd = $env:Password
+          if ($pwd -match '[,""\s]') {
+            throw "MSDEPLOY_PASSWORD contém aspas (`"), vírgula (,) ou espaço. Altere a senha no SmarterASP (sem `" , e espaço) e atualize o secret."
           }
 
-          if ($env:Password -match ',') {
-            throw "MSDEPLOY_PASSWORD contém vírgula (,). O msdeploy não suporta. Gere outra senha sem vírgula."
-          }
+          $site = $env:SiteName
+          $url  = $env:ServiceUrl
+          $usr  = $env:UserName
 
-          $pwdEsc = Escape-ForMsDeploy $env:Password
-          $usrEsc = Escape-ForMsDeploy $env:UserName
-          $urlEsc = Escape-ForMsDeploy $env:ServiceUrl
-          $site   = $env:SiteName
+          # 2) Monte o -dest sem QUALQUER aspa interna
+          $dest = "-dest:contentPath=$site,computerName=$url,userName=$usr,password=$pwd,authType=Basic,includeAcls=False"
 
-          # 2) Monte o -dest sem colocar aspas no INÍCIO do argumento
-          #    (apenas nas propriedades que precisam)
-          $dest = "-dest:contentPath=$site,computerName=""$urlEsc"",userName=""$usrEsc"",password=""$pwdEsc"",authType=Basic,includeAcls=False"
-
-          # 3) Splat para evitar problemas de parsing
+          # 3) Splat para entregar cada argumento isoladamente
           $args = @(
             "-verb:sync",
             "-source:contentPath=$src",
@@ -128,11 +121,11 @@ jobs:
           )
 
           # Log seguro (mascara senha)
-          $argsLogged = ($args -join ' ')
-          $argsLogged = $argsLogged -replace 'password=""[^""]*""','password="***"'
+          $argsLogged = ($args -join ' ') -replace 'password=[^,]*','password=***'
           Write-Host "msdeploy args (safe): $argsLogged"
 
           & $msdeploy @args
           if ($LASTEXITCODE -ne 0) { throw "msdeploy falhou com código $LASTEXITCODE" }
+
 
 
