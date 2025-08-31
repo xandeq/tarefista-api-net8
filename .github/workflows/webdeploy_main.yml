@@ -66,7 +66,6 @@ jobs:
       - name: Conferir aspNetCore no web.config (sanitizado)
         shell: pwsh
         run: |
-          run: |
           (Select-Xml -Path drop/web.config -XPath "//aspNetCore").Node.OuterXml -replace 'value="[^"]+"','value="***"' | Write-Host
 
       - name: Upload artifact (drop)
