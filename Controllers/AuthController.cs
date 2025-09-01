@@ -9,6 +9,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using TarefistaApi.DTOs.Auth;
+using Tarefista.Api.Services;
 
 [ApiController]
 [Route("api/Auth")]
@@ -102,6 +103,7 @@ public class AuthController : ControllerBase
             {
                 message = "Login successful",
                 token = tokenHandler.WriteToken(token),
+                userId = snapshot.Documents[0].Id, // ADD
                 user = userData
             });
         }
@@ -113,14 +115,37 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("logout")]
-    public IActionResult Logout()
+    public IActionResult Logout([FromServices] TokenBlacklistService blacklistService)
     {
-        // logout é client-side no JWT
-        return Ok(new { message = "Logout successful" });
+        try
+        {
+            var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer "))
+            {
+                _logger.LogWarning("Logout sem Authorization header. Nada a invalidar.");
+                // still OK: idempotente (cliente vai limpar sessão local)
+                return Ok(new { message = "Logout successful" });
+            }
+
+            var token = authHeader.Replace("Bearer ", "");
+            blacklistService.BlacklistToken(token);
+
+            _logger.LogInformation("Token invalidado em {Time}", DateTime.UtcNow);
+            return Ok(new { message = "Logout successful, token invalidated" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro no logout");
+            return StatusCode(500, new
+            {
+                message = "Error logging out user",
+                error = new { ex.Message, ex.StackTrace }
+            });
+        }
     }
 
     [HttpGet("userId")]
-    public IActionResult GetUserId()
+    public IActionResult GetUserId([FromServices] TokenBlacklistService tokenBlacklistService)
     {
         try
         {
@@ -130,21 +155,39 @@ public class AuthController : ControllerBase
 
             var token = authHeader.Replace("Bearer ", "");
             var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(_config["JWT_SECRET"]);
-
-            tokenHandler.ValidateToken(token, new TokenValidationParameters
+            var secret = _config["JWT:Secret"];
+            if (string.IsNullOrWhiteSpace(secret))
             {
-                ValidateIssuer = false,
-                ValidateAudience = false,
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateLifetime = true
-            }, out SecurityToken validatedToken);
+                _logger.LogError("JWT:Secret ausente na configuração.");
+                return StatusCode(500, new { message = "Server misconfiguration: JWT secret missing" });
+            }
+            var key = Encoding.UTF8.GetBytes(secret);
 
-            var jwtToken = (JwtSecurityToken)validatedToken;
-            var userId = jwtToken.Claims.First(x => x.Type == "userId").Value;
+            try
+            {
+                tokenHandler.ValidateToken(token, new TokenValidationParameters
+                {
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(2) // tolerância p/ pequenos desvios de relógio
+                }, out SecurityToken validatedToken);
 
-            return Ok(new { userId });
+                var jwtToken = (JwtSecurityToken)validatedToken;
+                var userId = jwtToken.Claims.First(x => x.Type == "userId").Value;
+
+                if (string.IsNullOrEmpty(userId))
+                    return BadRequest(new { message = "userId claim not found" });
+
+                return Ok(new { userId });
+            }
+            catch (SecurityTokenExpiredException)
+            {
+                return Unauthorized(new { message = "Token expired" });
+            }
+
         }
         catch (Exception ex)
         {
@@ -160,4 +203,21 @@ public class AuthController : ControllerBase
             });
         }
     }
+
+    [HttpGet("tempUserId")]
+    public IActionResult GetTempUserId()
+    {
+        try
+        {
+            var tempUserId = Guid.NewGuid().ToString("N");
+            _logger.LogInformation("TempUserId gerado: {TempUserId}", tempUserId);
+            return Ok(new { tempUserId });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao gerar tempUserId");
+            return StatusCode(500, new { message = "Error generating tempUserId" });
+        }
+    }
+
 }

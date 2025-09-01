@@ -1,6 +1,7 @@
 ﻿using FirebaseAdmin;
 using Google.Cloud.Firestore;
 using Microsoft.AspNetCore.Mvc;
+using Tarefista.Api.Services;
 
 [ApiController]
 [Route("api/[controller]")]

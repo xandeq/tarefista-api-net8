@@ -3,6 +3,7 @@ using FirebaseAdmin;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using Tarefista.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,6 +52,7 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddSingleton<FirebaseService>();
+builder.Services.AddSingleton<TokenBlacklistService>();
 
 builder.Configuration.AddUserSecrets<Program>();
 
