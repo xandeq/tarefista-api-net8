@@ -41,7 +41,7 @@ public class TasksController : ControllerBase
         var createdTs = Google.Cloud.Firestore.Timestamp.FromDateTime(createdAtUtc);
         var updatedTs = Google.Cloud.Firestore.Timestamp.FromDateTime(updatedAtUtc);
 
-        bool isRecurring = task.IsRecurring ? task.IsRecurring : false;
+        bool isRecurring = task.IsRecurring.HasValue && task.IsRecurring.Value ? task.IsRecurring.Value : false;
         string? recurrencePattern = isRecurring ? (task.RecurrencePattern ?? string.Empty) : null;
 
         Google.Cloud.Firestore.Timestamp? startTs = null;
@@ -92,23 +92,46 @@ public class TasksController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateTask(string id, [FromBody] TaskDto task)
     {
+        if (!ModelState.IsValid)
+            return ValidationProblem(ModelState);
+
         var docRef = _db.Collection("tasks").Document(id);
         var snapshot = await docRef.GetSnapshotAsync();
 
         if (!snapshot.Exists)
             return NotFound(new { message = "Task not found" });
 
-        await docRef.UpdateAsync(new Dictionary<string, object>
+        // updatedAt: usa o enviado se válido, senão agora
+        var updatedAtUtc = task.UpdatedAt.HasValue
+            ? DateTime.SpecifyKind(task.UpdatedAt.Value, DateTimeKind.Utc)
+            : DateTime.UtcNow;
+
+        var updates = new Dictionary<string, object>
         {
-            { "text", task.Text },
-            { "completed", task.Completed },
-            { "updatedAt", Timestamp.GetCurrentTimestamp() },
-            { "isRecurring", task.IsRecurring },
-            { "recurrencePattern", task.RecurrencePattern }
-        });
+            ["updatedAt"] = Google.Cloud.Firestore.Timestamp.FromDateTime(updatedAtUtc)
+        };
+
+        // Só atualiza text/completed se vieram no payload (para evitar sobrescrever com default)
+        if (task.Text is not null) updates["text"] = task.Text;
+        updates["completed"] = task.Completed; // bool default ok para toggle do seu front
+
+        // Recorrência: atualiza somente se vier algo
+        if (task.IsRecurring.HasValue) updates["isRecurring"] = task.IsRecurring.Value;
+        if (task.RecurrencePattern != null) updates["recurrencePattern"] = task.RecurrencePattern;
+
+        if (task.StartDate.HasValue)
+            updates["startDate"] = Google.Cloud.Firestore.Timestamp.FromDateTime(
+                DateTime.SpecifyKind(task.StartDate.Value, DateTimeKind.Utc));
+
+        if (task.EndDate.HasValue)
+            updates["endDate"] = Google.Cloud.Firestore.Timestamp.FromDateTime(
+                DateTime.SpecifyKind(task.EndDate.Value, DateTimeKind.Utc));
+
+        await docRef.UpdateAsync(updates);
 
         return Ok(new { message = "Task updated" });
     }
+
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteTask(string id, [FromQuery] string? userId, [FromQuery] string? tempUserId)
